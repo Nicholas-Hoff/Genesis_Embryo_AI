@@ -1,0 +1,15 @@
+astor
+colorama
+dash
+dash-daq
+duckdb
+numpy
+pandas
+plotly
+psutil
+pydantic
+pygad>=3.3.1
+pytest
+scikit-learn
+torch
+redbaron
