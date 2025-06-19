@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # ←— point at the merged DB you just built ——
 #DB_PATH         = 'godseed_training.db'
-DB_PATH         = 'godseed_aggressive_full.db'
+DB_PATH         = 'godseed_training.db'
 PRETRAIN_EPOCHS = 10
 BATCH_SIZE      = 128
 LR              = 1e-3

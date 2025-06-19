@@ -7,9 +7,9 @@ logger = logging.getLogger(__name__)
 
 # 1) Point at source files
 src_files = [
-    'godseed_aggressive_full_ram90_cpu100.db',
-    'godseed_aggressive_full_ram50_cpu100.db',
+    'godseed_aggressive_shadow.db',
     'godseed_aggressive_full.db',
+ #   'godseed_aggressive_full.db',
 ]
 target_db = 'godseed_training.db'
 

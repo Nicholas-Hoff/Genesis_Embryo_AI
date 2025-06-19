@@ -1,0 +1,59 @@
+{
+    "heartbeat_interval": 5.0,
+    "mutation_interval": 30.0,
+    "autosave_seconds": 300,
+    "narration_interval": 20,
+    "survival_threshold": 0.7,
+    "critical_survival_threshold": 0.85,
+    "rollback_required_cycles": 2,
+    "exploration_base": 0.2,
+    "dynamic_strategy_prob": 0.01,
+    "metrics_interval": 5,
+    "target_ram_usage_pct": 95.0,
+    "snapshot_ram_threshold_pct": 50.0,
+    "training_ram_threshold_pct": 85.0,
+    "mutation_ram_threshold_pct": 90.0,
+    "target_cpu_usage_pct": 100.0,
+    "mutation_rate": 0.1,
+    "crossover_rate": 0.5,
+    "gene_count_min": 1,
+    "gene_count_max": 10,
+    "elite_archive_size": 5,
+    "mutation_rate_initial": 0.3,
+    "mutation_rate_floor": 0.05,
+    "mutation_rate_anneal": 0.99,
+    "goal_mode": "shadow",
+    "task_params": {
+        "cpu_burst": {
+            "threshold_delta": 10.0,
+            "duration": 10.0
+        },
+        "memory_spike": {
+            "threshold_delta": 10.0,
+            "duration": 10.0
+        },
+        "io_stress": {
+            "threshold_delta": 0.0,
+            "duration": 10.0
+        },
+        "network_spike": {
+            "threshold_delta": 0.1,
+            "duration": 10.0
+        }
+    },
+    "cpu_threshold": 0.8,
+    "mem_threshold": 0.8,
+    "disk_threshold": 0.8,
+    "cpu_ok_streak": 3,
+    "mem_ok_streak": 3,
+    "disk_ok_streak": 3,
+    "cpu_bonus": 0.05,
+    "mem_bonus": 0.05,
+    "disk_bonus": 0.05,
+    "initial_weights": [
+        0.25,
+        0.25,
+        0.25,
+        0.25
+    ]
+}
