@@ -1,30 +1,35 @@
 # ─── world_model.py ─────────────────────────────────────────────────────────
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.cuda.amp import GradScaler
 try:
-    # PyTorch >= 2.0 provides a device agnostic autocast under torch.amp which
-    # requires a device_type argument.
-    from torch.amp import autocast as _autocast  # type: ignore
+    # PyTorch >= 2.0 provides a device agnostic autocast under torch.amp
+    from torch.amp import autocast as _autocast
     _AUTOCAST_NEEDS_DEVICE = True
-except Exception:  # pragma: no cover - older PyTorch
-    # Fallback for older versions where autocast lives under torch.cuda.amp and
-    # does not accept a device_type parameter.
-    from torch.cuda.amp import autocast as _autocast  # type: ignore
+except ImportError:
+    # Fallback for older PyTorch versions
+    from torch.cuda.amp import autocast as _autocast
     _AUTOCAST_NEEDS_DEVICE = False
 from torch.nn.utils import clip_grad_norm_
+from typing import List
 
-# 1) Device setup (if not already there)
+# Device setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def _autocast_ctx(device_type: str, use_amp: bool):
+    """
+    Return an autocast context manager compatible with the installed PyTorch.
+    """
+    if _AUTOCAST_NEEDS_DEVICE:
+        return _autocast(device_type=device_type, enabled=use_amp)
+    return _autocast(enabled=use_amp)
 
 class WorldModel(nn.Module):
     """
-    A small MLP that takes [state || choice_embedding] as input and
-    predicts the next-state delta (state_dim).
+    A small MLP that takes [state || choice_emb] as input and
+    predicts the next-state delta.
     Input shape:  (B, state_dim + choice_emb_dim)
     Output shape: (B, state_dim)
     """
@@ -44,45 +49,58 @@ class WorldModel(nn.Module):
         x = self.relu2(self.fc2(x))
         return self.fc3(x)
 
-    def compile(self):
+    def compile(self) -> nn.Module:
         """
-        If desired, call once at startup to JIT‐compile your model.
+        Optionally compile the model with TorchScript for performance.
         """
         self.scripted = torch.jit.script(self)
         return self.scripted
 
+    def prepare_input(self, state: List[float], choice_emb: torch.Tensor) -> torch.Tensor:
+        """
+        Convert a Python state list and a precomputed choice embedding
+        into a single input tensor for the world model.
+        """
+        # state: List[float] -> tensor [1, state_dim]
+        st = torch.tensor(state, device=device).unsqueeze(0)
+        # choice_emb: Tensor [1, choice_emb_dim]
+        return torch.cat([st, choice_emb.to(device)], dim=1)
+
+    def post_process(self, state: List[float], delta: torch.Tensor) -> List[float]:
+        """
+        Apply the predicted delta to the old state and return new state list.
+        """
+        new_state = torch.tensor(state, device=device) + delta.squeeze(0)
+        return new_state.tolist()
+
+    def estimate_reward(self, state: List[float]) -> float:
+        """
+        Estimate a reward for a given state using the survival composite score.
+        """
+        from health import SystemHealth, Survival
+        raw = SystemHealth.check()
+        return Survival.score(raw)['composite']
 
 class WorldModelTrainer:
     """
-    Wraps an existing WorldModel instance + optimizer + (optional) AMP scaler.
-    Exposes train_step(...) that takes exactly three arguments:
-       1) state_batch:        Tensor[B, state_dim]
-       2) choice_emb_batch:   Tensor[B, choice_emb_dim]
-       3) actual_delta_batch: Tensor[B, state_dim]
+    Wraps a WorldModel instance with an optimizer and optional AMP scaler.
+    Provides a single `train_step` method.
     """
-
     def __init__(
         self,
         model: WorldModel,
         lr: float = 1e-3,
         grad_clip: float | None = None
     ):
-        """
-        Args:
-          model (WorldModel): a pre-initialized WorldModel instance, already
-                              sized for (state_dim, choice_emb_dim, hidden_dim).
-          lr    (float):       learning rate for Adam.
-        """
-
-        # 1) We assume `model` is already on CPU or CUDA as desired.
+        # Move model to device
         self.model = model.to(device)
         self.device = device
 
-        # 2) Create an optimizer on the model’s parameters
+        # Optimizer
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.grad_clip = grad_clip
 
-        # 3) Mixed‐precision (AMP) setup if running on CUDA
+        # AMP setup
         use_amp = (self.device.type == "cuda")
         self.scaler = GradScaler(
             init_scale=2**16,
@@ -91,12 +109,7 @@ class WorldModelTrainer:
             growth_interval=2000,
             enabled=use_amp
         )
-
-        # 4) A context manager for autocast with version compatibility
-        if _AUTOCAST_NEEDS_DEVICE:
-            self.autocast_ctx = lambda: _autocast(device_type=self.device.type, enabled=use_amp)
-        else:  # older torch
-            self.autocast_ctx = lambda: _autocast(enabled=use_amp)
+        self.autocast_ctx = lambda: _autocast_ctx(self.device.type, use_amp)
 
     def train_step(
         self,
@@ -105,40 +118,37 @@ class WorldModelTrainer:
         actual_delta_batch: torch.Tensor
     ) -> float:
         """
-        Performs exactly one optimization step on the shared world model.
-
+        Perform one optimization step on the world model.
         Args:
-          state_batch        (Tensor[B, state_dim]):       before‐state
-          choice_emb_batch   (Tensor[B, choice_emb_dim]):  embedding of chosen action
-          actual_delta_batch (Tensor[B, state_dim]):       actual next_state - state
-
+          state_batch        Tensor[B, state_dim]
+          choice_emb_batch   Tensor[B, choice_emb_dim]
+          actual_delta_batch Tensor[B, state_dim]
         Returns:
-          float: the MSE loss (as a Python float)
+          MSE loss as Python float
         """
-        # 1) Move all inputs to self.device
-        state_batch        = state_batch.to(self.device)
-        choice_emb_batch   = choice_emb_batch.to(self.device)
+        # Move data to device
+        state_batch      = state_batch.to(self.device)
+        choice_emb_batch = choice_emb_batch.to(self.device)
         actual_delta_batch = actual_delta_batch.to(self.device)
 
-        # 2) Concatenate along last dimension → shape (B, state_dim + choice_emb_dim)
+        # Concatenate inputs
         model_input = torch.cat([state_batch, choice_emb_batch], dim=-1)
 
-        # 3) Mixed‐precision forward/backward if AMP is enabled
+        # Forward + loss
         with self.autocast_ctx():
-            predicted_delta = self.model(model_input)
-            loss = F.mse_loss(predicted_delta, actual_delta_batch)
+            pred_delta = self.model(model_input)
+            loss = F.mse_loss(pred_delta, actual_delta_batch)
 
-        # 4) Zero grads, backward (AMP aware), optimizer step
+        # Backward + optimizer step
         self.optimizer.zero_grad()
-        if self.scaler.is_enabled():  # AMP path
+        if self.scaler.is_enabled():
             self.scaler.scale(loss).backward()
-            # Unscale before clipping so grads are in fp32
             self.scaler.unscale_(self.optimizer)
             if self.grad_clip is not None:
                 clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.scaler.step(self.optimizer)
             self.scaler.update()
-        else:  # regular fp32
+        else:
             loss.backward()
             if self.grad_clip is not None:
                 clip_grad_norm_(self.model.parameters(), self.grad_clip)

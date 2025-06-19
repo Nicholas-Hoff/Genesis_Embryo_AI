@@ -154,6 +154,8 @@ def mutation_cycle(
     embryo: Any,
     meta_weights: Dict[str, float],
     stagnant_cycles: int,
+    *,
+    strategy_idx: Optional[int] = None,
     stuck_threshold: int = 5,
     max_reset_weight: float = 0.2,
     reset_penalty: float = 0.0,
@@ -162,31 +164,37 @@ def mutation_cycle(
 ) -> Union[Tuple[float, int], Tuple[float, int, str]]:
     """
     Single mutation step applied directly on the Embryo object.
+    If strategy_idx is provided, uses that action index from embryo.action_space
+    instead of stochastic pick_strategy.
     Returns: (new_score, new_stagnant_cycles) or
-             (new_score, new_stagnant_cycles, strategy_name)
-    if return_strategy=True
+             (new_score, new_stagnant_cycles, strategy_name) if return_strategy=True.
     """
     from health import SystemHealth, Survival
+
     # 1) Snapshot & measure before
-    pre_state = copy.deepcopy(embryo)
+    pre_state      = copy.deepcopy(embryo)
     before_metrics = SystemHealth.check()
-    before_score = Survival.score(before_metrics)["composite"]
-    is_stuck = stagnant_cycles >= stuck_threshold
+    before_score   = Survival.score(before_metrics)["composite"]
+    is_stuck       = stagnant_cycles >= stuck_threshold
     logger.warning(f"[MUTATION CYCLE] is_stuck={is_stuck} (stagnant={stagnant_cycles})")
 
-    # 2) Pick and apply strategy
-    choice, strat = embryo.mutator.pick_strategy(meta_weights, is_stuck)
+    # 2) Pick and apply strategy (planner‐driven if strategy_idx given)
+    if strategy_idx is not None:
+        choice = embryo.action_space[strategy_idx]
+        strat  = embryo.mutator.get_strategy(choice)
+    else:
+        choice, strat = embryo.mutator.pick_strategy(meta_weights, is_stuck)
     desc, ctx = strat.apply(embryo)
 
     # 3) Log and measure after
-    raw_after = SystemHealth.check()
+    raw_after    = SystemHealth.check()
     scored_after = Survival.score(raw_after)
-    new_score = scored_after["composite"]
+    new_score    = scored_after["composite"]
 
+    # Record mutation context
     params = ctx.get("param")
-    olds = ctx.get("old", 0.0)
-    news = ctx.get("new", 0.0)
-
+    olds   = ctx.get("old", 0.0)
+    news   = ctx.get("new", 0.0)
     if isinstance(params, list) or isinstance(olds, list) or isinstance(news, list):
         if not isinstance(params, list):
             params = [params]
@@ -220,6 +228,7 @@ def mutation_cycle(
             disk=scored_after["disk"],
             network=scored_after.get("network", 0.0)
         )
+
     logger.info(f"[SCORE] before={before_score:.4f}, after={new_score:.4f}")
 
     # 4) Compute reward & update weights
@@ -229,19 +238,22 @@ def mutation_cycle(
     factor = 1.5 if reward < 0 else 1.0
     meta_weights[choice] = max(0.0, meta_weights.get(choice, 0.0) + alpha * reward * factor)
     meta_weights["reset"] = min(meta_weights.get("reset", 0.0), max_reset_weight)
-    total_w = sum(meta_weights.values()) or 1.0
-    for strat_name in meta_weights:
-        meta_weights[strat_name] /= total_w
+    total = sum(meta_weights.values()) or 1.0
+    for name in meta_weights:
+        meta_weights[name] /= total
     logger.info(f"[META] normalized weights: {meta_weights}")
 
+    # restore previous state on negative outcome
     if new_score < before_score:
         embryo.__dict__.clear()
         embryo.__dict__.update(pre_state.__dict__)
 
-    # 6) Update stagnant counter
+    # 5) Update stagnant counter
     new_stagnant = 0 if new_score > before_score else stagnant_cycles + 1
 
-    return (new_score, new_stagnant, choice) if return_strategy else (new_score, new_stagnant)
+    if return_strategy:
+        return new_score, new_stagnant, choice
+    return new_score, new_stagnant
 
 # ─── Archive of top‐k states ───────────────────────────────────────────────
 # mutation.py

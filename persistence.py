@@ -1,6 +1,7 @@
 import pickle
 import tempfile
 import json
+import torch
 import datetime
 import duckdb
 import gc, queue, os, logging
@@ -10,6 +11,7 @@ from typing import Any, List, Tuple, Dict, Optional
 from colorama import Fore, Style
 from memory_optimizer import EfficientStateManager
 from threading import Thread
+from mutation import MutationEngine
 
 # ——— Helpers —————————————————————————————————————————————————
 
@@ -112,6 +114,16 @@ class MemoryDB:
             "survival_after DOUBLE, novelty_after DOUBLE, efficiency_after DOUBLE, mutation_error_after DOUBLE, cycle_after DOUBLE"
         )
     }
+    def fetch_for_episode(self, hb_index: int) -> torch.Tensor:
+        # pull all transitions from the last mutation cycle
+        rows = self.conn.execute(
+            "SELECT survival_before, novelty_before, efficiency_before, "
+            "mutation_error_before, cycle_before FROM transitions "
+            "WHERE hb = ?", [hb_index]
+        ).fetchall()
+        # convert to a Tensor of shape [seq_len, 1, state_dim]
+        data = torch.tensor(rows, dtype=torch.float32).unsqueeze(1)
+        return data
 
     def __init__(self, path: str = "godseed_memory.db") -> None:
         # Connect to DuckDB and enforce memory limits
@@ -524,7 +536,7 @@ class DuckdbStateIO:
 
         # ───── Reconstruct the Mutator object from its JSON ─────────
         try:
-            state['mutator'] = Mutator.from_json(mutator_json)
+            state['mutator'] = MutationEngine.from_json(mutator_json)
         except Exception as e:
             raise RuntimeError(f"Failed to deserialize mutator: {e}")
 

@@ -89,10 +89,17 @@ class CrashTracker:
     # ─── NEW: Reconstruct from JSON ─────────────────────────────────────
     @classmethod
     def from_json(cls, json_str: str) -> "CrashTracker":
-        """
-        Given the JSON we stored, re-create a CrashTracker instance.
-        """
-        instance = cls.__new__(cls)
-        # Skip calling __init__ so we don't reload from disk immediately
-        instance.crashes = json.loads(json_str)
-        return instance
+        # create fresh and bypass __init__
+        inst = cls.__new__(cls)
+        # set up the path and load current on‐disk cursors
+        inst.__dict__.update({
+            'crashes': json.loads(json_str),
+            '_CACHE_FILE': _CACHE_FILE,
+            'paths': [Path(_CACHE_FILE)],
+            'cursors': { Path(_CACHE_FILE): 0 },
+            'logger': logging.getLogger(__name__)
+        })
+        # optionally write out the new crash list immediately
+        inst._save()
+        return inst
+
