@@ -269,6 +269,14 @@ class Archive:
         self._heap: List[Tuple[float,int,Any]] = []
         self._counter = itertools.count()
 
+    def __getstate__(self):
+        return {"k": self.k, "_heap": self._heap}
+
+    def __setstate__(self, state):
+        self.k = state["k"]
+        self._heap = state.get("_heap", [])
+        self._counter = itertools.count()
+
     def consider(self, state: Any, score: float) -> None:
         cnt = next(self._counter)
         entry = (score, cnt, copy.deepcopy(state))
