@@ -112,7 +112,12 @@ class MemoryDB:
             "survival_before DOUBLE, novelty_before DOUBLE, efficiency_before DOUBLE, "
             "mutation_error_before DOUBLE, cycle_before DOUBLE, action TEXT, goal TEXT, reward DOUBLE, "
             "survival_after DOUBLE, novelty_after DOUBLE, efficiency_after DOUBLE, mutation_error_after DOUBLE, cycle_after DOUBLE"
-        )
+        ),
+        "reflections": (
+            "ts TIMESTAMP, hb INT, mode TEXT, gene_count INT, hb_interval DOUBLE,"
+            " survival_threshold DOUBLE, recent_survival DOUBLE, trend TEXT,"
+            " strategy TEXT, mutation_rate DOUBLE"
+        ),
     }
     def fetch_for_episode(self, hb_index: int) -> torch.Tensor:
         # pull all transitions from the last mutation cycle
@@ -285,13 +290,15 @@ class MemoryDB:
 class SnapshotManager:
     """
     Handles periodic exports of each DuckDB table to Parquet,
-    using a background thread.
+    using a background thread.  Updated to snapshot multiple DBs.
     """
-    def __init__(self, db_path: str, snap_dir: str = "snapshots"):
-        self.db_path = db_path
-        self.snap_dir = snap_dir
+    def __init__(self, db_paths: List[str], snap_dir: str = "snapshots"):
+        # db_paths: list of full paths to .db files (state DB, memory DB, etc.)
+        self.db_paths    = db_paths
+        self.snap_dir    = snap_dir
         os.makedirs(self.snap_dir, exist_ok=True)
 
+        # All Parquet exports will go here:
         self.parquet_dir = os.path.join(self.snap_dir, "parquet_export")
         os.makedirs(self.parquet_dir, exist_ok=True)
 
@@ -299,40 +306,55 @@ class SnapshotManager:
         Thread(target=self._worker, daemon=True).start()
 
     def export_snapshot(self, export_dir: str = None) -> None:
+        """
+        Enqueue a snapshot.  If export_dir is omitted, uses self.parquet_dir.
+        """
         if export_dir is None:
             export_dir = self.parquet_dir
         self._q.put(export_dir)
 
     def _worker(self):
+        """
+        Background thread: for each enqueued export_dir,
+        iterate over each DB in self.db_paths and dump all tables.
+        """
         while True:
             export_dir = self._q.get()
             if export_dir is None:
-                break
-            try:
-                self._do_export(export_dir)
-            except Exception as e:
-                logging.error(f"[SNAPSHOT WORKER] export to {export_dir} failed: {e}")
-            finally:
+                # shutdown signal
                 self._q.task_done()
+                break
 
-    def _do_export(self, export_dir: str) -> None:
-        conn = duckdb.connect(self.db_path)
-        conn.execute("PRAGMA memory_limit='8GB';")
+            # For each DB, make a subfolder named after the DB file (without extension)
+            for db_path in self.db_paths:
+                db_name       = os.path.splitext(os.path.basename(db_path))[0]
+                db_export_dir = os.path.join(export_dir, db_name)
+                os.makedirs(db_export_dir, exist_ok=True)
 
-        os.makedirs(export_dir, exist_ok=True)
-        tables = [r[0] for r in conn.execute("SHOW TABLES").fetchall()]
-        for tbl in tables:
-            out_path = os.path.join(export_dir, f"{tbl}.parquet")
-            conn.execute(
-                f"COPY (SELECT * FROM {tbl}) TO '{out_path}' (FORMAT PARQUET)"
-            )
-        conn.close()
-        gc.collect()
-        logging.info(f"[SNAPSHOT] export to {export_dir} done")
+                try:
+                    conn = duckdb.connect(db_path)
+                    conn.execute("PRAGMA memory_limit='8GB';")
+                    tables = [r[0] for r in conn.execute("SHOW TABLES").fetchall()]
+                    for tbl in tables:
+                        out_path = os.path.join(db_export_dir, f"{tbl}.parquet")
+                        conn.execute(
+                            f"COPY (SELECT * FROM {tbl}) TO '{out_path}' (FORMAT PARQUET)"
+                        )
+                    conn.close()
+                except Exception as e:
+                    logging.error(f"[SNAPSHOT WORKER] export for {db_path} → {db_export_dir} failed: {e}")
+
+            gc.collect()
+            logging.info(f"[SNAPSHOT] export to {export_dir} done")
+            self._q.task_done()
 
     def shutdown(self):
+        """
+        Signal the worker to stop, and wait for it.
+        """
         self._q.put(None)
         self._q.join()
+
 
 class DuckdbStateIO:
     """

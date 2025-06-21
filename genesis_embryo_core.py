@@ -403,12 +403,23 @@ class Embryo:
 
         # Core systems
         self.mem           = MemoryArchive()              # In‐memory log
-        self.db_path       = db_path                       # Path to DuckDB file
-        self.db            = MemoryDB(path=self.db_path)   # DuckDB‐backed metric DB
+        # --- initialize your state + memory backends ---
+        self.state_path = db_path  # existing DuckDB file for survival_details, transitions, etc.
+        self.memory_path = db_path.replace(".duckdb", "_memory.db")  
+        # or wherever you want to store godseed_memory.db
+
+        # 1) in-memory metrics DB
+        self.db = MemoryDB(path=self.memory_path)
+
+        # 2) snapshot manager now tracks *both* databases
+        from persistence import SnapshotManager
+        self.snap_mgr = SnapshotManager(
+            db_paths=[ self.state_path, self.memory_path ],
+            snap_dir=self.cfg.get("snap_dir", "snapshots")
+)
         self._log_pool = ThreadPoolExecutor(max_workers=8)
         self.cur          = Curiosity(self.cfg.get("exploration_base"))
         self.emotions     = EmotionalDrives()
-        self.snap_mgr     = SnapshotManager(db_path=self.db_path)
         self.disable_snapshots = disable_snapshots
         self.health       = HealthMonitor(sample_interval=self.metrics_interval)
         self.state_path = db_path
@@ -970,6 +981,10 @@ class Embryo:
                     logging.info(f"[SNAPSHOT] exporting to {self.snap_mgr.parquet_dir}")
                     # no argument → uses self.parquet_dir
                     self.snap_mgr.export_snapshot()
+            # ─── PERIODIC REFLECTION ───────────────────────────────────────────────
+                # every N heartbeats, run reflect() so it writes into the new reflections table
+                if self.hb.count % self.cfg.get("reflect_interval", 100) == 0:
+                    self.reflect()
 
             # ─── METRICS SAMPLING ────────────────────────────────────────
             if self._hb_counter % self._metrics_interval == 0:
