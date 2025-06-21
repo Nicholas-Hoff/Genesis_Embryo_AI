@@ -88,7 +88,7 @@ def test_mutation_cycle_updates_score_and_weights(monkeypatch):
     embryo = DummyEmbryo()
     meta = {"gaussian": 1.0, "reset": 0.0}
 
-    new_score, new_stagnant, strategy = mutation.mutation_cycle(
+    new_score, new_stagnant, strategy, ctx = mutation.mutation_cycle(
         embryo, meta, stagnant_cycles=0, return_strategy=True
     )
 
@@ -97,6 +97,7 @@ def test_mutation_cycle_updates_score_and_weights(monkeypatch):
     assert strategy == "gaussian"
     assert embryo.val == 1
     assert meta["gaussian"] > 0.9
+    assert isinstance(ctx, dict)
 
 
 def test_explore_mutation_changes_params():

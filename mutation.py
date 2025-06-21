@@ -161,13 +161,15 @@ def mutation_cycle(
     reset_penalty: float = 0.0,
     alpha: float = 0.1,
     return_strategy: bool = False
-) -> Union[Tuple[float, int], Tuple[float, int, str]]:
+) -> Union[Tuple[float, int], Tuple[float, int, str, Dict[str, Any]]]:
     """
     Single mutation step applied directly on the Embryo object.
     If strategy_idx is provided, uses that action index from embryo.action_space
     instead of stochastic pick_strategy.
     Returns: (new_score, new_stagnant_cycles) or
-             (new_score, new_stagnant_cycles, strategy_name) if return_strategy=True.
+             (new_score, new_stagnant_cycles, strategy_name, ctx)
+             if return_strategy=True. The returned `ctx` is the mutation
+             context dictionary recorded in the database.
     """
     from health import SystemHealth, Survival
 
@@ -252,7 +254,7 @@ def mutation_cycle(
     new_stagnant = 0 if new_score > before_score else stagnant_cycles + 1
 
     if return_strategy:
-        return new_score, new_stagnant, choice
+        return new_score, new_stagnant, choice, ctx
     return new_score, new_stagnant
 
 # ─── Archive of top‐k states ───────────────────────────────────────────────
