@@ -1235,7 +1235,7 @@ class Embryo:
             choice_emb = embs[act_i].unsqueeze(0)
 
             # ─── 4) Mutation & strategy apply ─────────────────────────────
-            new_score, self.bad_cycles, strat = mutation_cycle(
+            new_score, self.bad_cycles, strat, ctx = mutation_cycle(
                 embryo=self,
                 meta_weights=self.mutator.weights,
                 stagnant_cycles=self.bad_cycles,
@@ -1308,6 +1308,22 @@ class Embryo:
             # Summarize mutation outcome
             delta = new_score - prev_surv
             self.db.record_mutation(result, strat, delta)
+
+            # summarize the mutation episode for dashboards
+            param_field = ctx.get('param')
+            if isinstance(param_field, list):
+                param_count = len(param_field)
+            elif param_field is None:
+                param_count = 0
+            else:
+                param_count = 1
+            self.db.record_mutation_episode(
+                str(self.hb.count),
+                1,
+                param_count,
+                {"composite": prev_surv},
+                {"composite": new_score},
+            )
 
             self.duckdb_state_io.save(self)
 

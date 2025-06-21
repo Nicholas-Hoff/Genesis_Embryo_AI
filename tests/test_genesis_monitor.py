@@ -40,6 +40,36 @@ def test_load_survival_details_reads_parquet(monkeypatch, tmp_path):
     pd.testing.assert_frame_equal(df, exp)
 
 
+def test_load_mutation_episodes_missing_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(GM, "MUTATION_EPISODES_FILE", str(tmp_path / "missing.parquet"))
+    df = GM.load_mutation_episodes()
+    assert df.empty
+    assert list(df.columns) == [
+        'ts', 'episode_id', 'strategies_applied', 'parameters_changed',
+        'survival_before', 'survival_after', 'survival_change'
+    ]
+
+
+def test_load_mutation_episodes_reads_parquet(monkeypatch, tmp_path):
+    path = tmp_path / "episodes.parquet"
+    exp = pd.DataFrame({
+        'ts': pd.to_datetime([1], unit='s'),
+        'episode_id': ['1'],
+        'strategies_applied': [1],
+        'parameters_changed': [2],
+        'survival_before': [0.5],
+        'survival_after': [0.6],
+        'survival_change': [0.1]
+    })
+    con = duckdb.connect()
+    con.register('exp', exp)
+    con.execute(f"COPY exp TO '{path}' (FORMAT PARQUET)")
+    con.close()
+    monkeypatch.setattr(GM, "MUTATION_EPISODES_FILE", str(path))
+    df = GM.load_mutation_episodes()
+    pd.testing.assert_frame_equal(df, exp)
+
+
 def test_update_dashboard_uses_memory(monkeypatch):
     hb = pd.DataFrame({'ts': pd.to_datetime([0], unit='s'), 'survival_score': [0.5], 'heartbeat': [1]})
     mut = pd.DataFrame({'ts': pd.to_datetime([0], unit='s'), 'strategy': ['s'], 'param': ['p'], 'survival_change': [0.1]})
