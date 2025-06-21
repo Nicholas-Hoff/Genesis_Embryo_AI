@@ -4,9 +4,12 @@ Inspired by: "Simulating Time with Square-Root Space" by Ryan Williams
 Purpose: Allow efficient long-term memory storage through checkpointing + recomputation rules
 """
 
+import logging
 import copy
 import heapq
 from typing import Callable, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class EfficientStateManager:
     def __init__(self, checkpoint_interval: int = 10):
@@ -18,8 +21,10 @@ class EfficientStateManager:
     def save_state(self, state: Any, recompute_rule: Callable = None):
         if self.counter % self.checkpoint_interval == 0:
             self.checkpoints[self.counter] = copy.deepcopy(state)
+            logger.debug("Checkpoint saved at %s", self.counter)
         elif recompute_rule:
             self.recompute_rules[self.counter] = recompute_rule
+            logger.debug("Recompute rule stored at %s", self.counter)
         self.counter += 1
 
     def load_state(self, target_index: int):
@@ -29,6 +34,7 @@ class EfficientStateManager:
             rule = self.recompute_rules.get(i)
             if rule:
                 state = rule(state)
+        logger.debug("State loaded for index %s from checkpoint %s", target_index, nearest_cp)
         return state
 
 class TimeSimEngine:
@@ -37,10 +43,13 @@ class TimeSimEngine:
 
     def enqueue(self, state_index: int, estimated_score: float):
         heapq.heappush(self.future_branches, (-estimated_score, state_index))
+        logger.debug("Branch enqueued index=%s score=%s", state_index, estimated_score)
 
     def get_next(self):
         if self.future_branches:
-            return heapq.heappop(self.future_branches)
+            item = heapq.heappop(self.future_branches)
+            logger.debug("Dequeued branch %s", item)
+            return item
         return None
 
 class MemoryAIManager:
@@ -54,12 +63,17 @@ class MemoryAIManager:
 
     def track_usage(self, key):
         self.usage_stats[key] = self.usage_stats.get(key, 0) + 1
+        logger.debug("Usage for %s now %s", key, self.usage_stats[key])
 
     def should_retain(self, key, recompute_cost):
         freq = self.usage_stats.get(key, 0)
-        return freq > recompute_cost
+        retain = freq > recompute_cost
+        logger.debug("Should retain %s? %s", key, retain)
+        return retain
 
     def summarize_episode(self, episode_tensor):
         if self.summarizer is None:
             return None
-        return self.summarizer.summarize(episode_tensor)
+        result = self.summarizer.summarize(episode_tensor)
+        logger.debug("Episode summarized via AI")
+        return result

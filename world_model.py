@@ -1,9 +1,16 @@
 # ─── world_model.py ─────────────────────────────────────────────────────────
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.cuda.amp import GradScaler
+
+try:
+    from torch.amp import GradScaler  # PyTorch >=2.0
+    _GRADSCALER_NEEDS_DEVICE = True
+except Exception:  # pragma: no cover - fallback for older torch
+    from torch.cuda.amp import GradScaler  # type: ignore
+    _GRADSCALER_NEEDS_DEVICE = False
 try:
     # PyTorch >= 2.0 provides a device agnostic autocast under torch.amp
     from torch.amp import autocast as _autocast
@@ -14,6 +21,8 @@ except ImportError:
     _AUTOCAST_NEEDS_DEVICE = False
 from torch.nn.utils import clip_grad_norm_
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 # Device setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -96,19 +105,27 @@ class WorldModelTrainer:
         self.model = model.to(device)
         self.device = device
 
+        logger.debug(
+            "WorldModelTrainer initialized lr=%s grad_clip=%s device=%s", lr, grad_clip, self.device
+        )
+
         # Optimizer
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.grad_clip = grad_clip
 
         # AMP setup
         use_amp = (self.device.type == "cuda")
-        self.scaler = GradScaler(
+        scaler_kwargs = dict(
             init_scale=2**16,
             growth_factor=2.0,
             backoff_factor=0.5,
             growth_interval=2000,
-            enabled=use_amp
+            enabled=use_amp,
         )
+        if _GRADSCALER_NEEDS_DEVICE:
+            self.scaler = GradScaler(self.device.type, **scaler_kwargs)
+        else:
+            self.scaler = GradScaler(**scaler_kwargs)
         self.autocast_ctx = lambda: _autocast_ctx(self.device.type, use_amp)
 
     def train_step(
@@ -154,4 +171,6 @@ class WorldModelTrainer:
                 clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
 
-        return loss.item()
+        loss_val = loss.item()
+        logger.debug("WorldModelTrainer step completed loss=%s", loss_val)
+        return loss_val
