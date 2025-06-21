@@ -345,6 +345,8 @@ class Embryo:
         # Config, modes, args
         self.cfg = config
         self.launch_args = launch_args or argparse.Namespace()
+        # persist DB location for serialization/deepcopy
+        self.db_path = db_path
 
             # Crash tracker
         self.CrashTracker = CrashTracker()
